@@ -255,7 +255,6 @@ namespace DarkMultiPlayer
             if ((TimeWarp.CurrentRateIndex == 0) && (TimeWarp.CurrentRate < 1.1f) && !parent.timeSyncer.locked && (warpMode == WarpMode.SUBSPACE) && (parent.timeSyncer.currentSubspace == -1))
             {
                 int newSubspaceID = parent.timeSyncer.LockNewSubspace(parent.timeSyncer.GetServerClock(), Planetarium.GetUniversalTime(), 1f);
-                parent.timeSyncer.LockSubspace(newSubspaceID);
                 Subspace newSubspace = parent.timeSyncer.GetSubspace(newSubspaceID);
                 using (MessageWriter mw = new MessageWriter())
                 {
@@ -267,6 +266,7 @@ namespace DarkMultiPlayer
                     mw.Write<float>(newSubspace.subspaceSpeed);
                     parent.networkWorker.SendWarpMessage(mw.GetMessageBytes());
                 }
+                parent.timeSyncer.LockSubspace(newSubspaceID);
             }
         }
 

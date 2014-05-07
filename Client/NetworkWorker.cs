@@ -20,7 +20,6 @@ namespace DarkMultiPlayer
             private set;
             get;
         }
-
         private Client parent;
         private TcpClient clientConnection;
         private float lastSendTime;
@@ -705,6 +704,8 @@ namespace DarkMultiPlayer
             {
                 int subspaceID = mr.Read<int>();
                 double planetTime = mr.Read<double>();
+                //Don't care if the vessel is flying or not on the client, it's detected from the protovessel data.
+                mr.Read<bool>();
                 string vesselData = mr.Read<string>();
                 string tempFile = Path.GetTempFileName();
                 using (StreamWriter sw = new StreamWriter(tempFile))
@@ -956,6 +957,7 @@ namespace DarkMultiPlayer
                     mw.Write<int>(parent.timeSyncer.currentSubspace);
                     mw.Write<double>(Planetarium.GetUniversalTime());
                     mw.Write<string>(vessel.vesselID.ToString());
+                    mw.Write<bool>(vessel.situation == Vessel.Situations.FLYING);
                     mw.Write<string>(sr.ReadToEnd());
                     newMessage.data = mw.GetMessageBytes();
                 }

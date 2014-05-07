@@ -739,10 +739,8 @@ namespace DarkMultiPlayerServer
                 SendConnectionEnd(client, "You must authenticate before attempting to send a " + message.type.ToString() + " message");
                 return;
             }
-
             try
             {
-
                 switch (message.type)
                 {
                     case ClientMessageType.HEARTBEAT:
@@ -808,13 +806,12 @@ namespace DarkMultiPlayerServer
 
         private static void HandleHandshakeRequest(ClientObject client, byte[] messageData)
         {
-
             int protocolVersion;
             string playerName = "";
             string playerGuid = Guid.Empty.ToString();
             string reason = "";
             //0 - Success
-            int handshakeReponse = 0;            
+            int handshakeReponse = 0;
             try
             {
                 using (MessageReader mr = new MessageReader(messageData, false))
@@ -1066,16 +1063,28 @@ namespace DarkMultiPlayerServer
                 int subspaceID = mr.Read<int>();
                 double planetTime = mr.Read<double>();
                 string vesselGuid = mr.Read<string>();
-                DarkLog.Debug("Saving vessel " + vesselGuid + " from " + client.playerName);
+                bool isFlying = mr.Read<bool>();
                 string vesselData = mr.Read<string>();
-                using (StreamWriter sw = new StreamWriter(Path.Combine(Server.universeDirectory, "Vessels", vesselGuid + ".txt")))
+                //Don't save flying vessels to the server.
+                if (!isFlying)
                 {
-                    sw.Write(vesselData);
+                    string vesselFile = Path.Combine(Server.universeDirectory, "Vessels", vesselGuid + ".txt");
+                    //Make the log quieter - Only report when a new vessel is created here.
+                    if (!File.Exists(vesselFile))
+                    {
+                        DarkLog.Debug("Saving new vessel " + vesselGuid + " from " + client.playerName);
+                    }
+                    using (StreamWriter sw = new StreamWriter(vesselFile))
+                    {
+                        sw.Write(vesselData);
+                    }
                 }
+                //Send the vessel off to the other clients
                 using (MessageWriter mw = new MessageWriter())
                 {
                     mw.Write<int>(subspaceID);
                     mw.Write<double>(planetTime);
+                    mw.Write<bool>(isFlying);
                     mw.Write<string>(vesselData);
                     ServerMessage newMessage = new ServerMessage();
                     newMessage.type = ServerMessageType.VESSEL_PROTO;
@@ -1542,6 +1551,8 @@ namespace DarkMultiPlayerServer
                 mw.Write<int>(GetLatestSubspace());
                 //Send the vessel with a send time of 0 so it instantly loads on the client.
                 mw.Write<double>(0);
+                //No saved vessel will be flying
+                mw.Write<bool>(false);
                 mw.Write<string>(vesselData);
                 newMessage.data = mw.GetMessageBytes();
             }

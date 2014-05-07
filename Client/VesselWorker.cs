@@ -56,6 +56,7 @@ namespace DarkMultiPlayer
         private bool wasSpectating;
         private int spectateType;
         private bool destroyIsValid;
+        private Vessel switchActiveVesselOnNextUpdate;
 
         public VesselWorker(Client parent)
         {
@@ -87,6 +88,12 @@ namespace DarkMultiPlayer
             //If we aren't in a DMP game don't do anything.
             if (workerEnabled)
             {
+                if (switchActiveVesselOnNextUpdate != null)
+                {
+                    FlightGlobals.ForceSetActiveVessel(switchActiveVesselOnNextUpdate);
+                    switchActiveVesselOnNextUpdate = null;
+                }
+
                 //State tracking the active players vessels.
                 UpdateOtherPlayersActiveVesselStatus();
 
@@ -447,8 +454,7 @@ namespace DarkMultiPlayer
                     //Also delay the position send
                     serverVesselsPositionUpdate[checkVessel.id.ToString()] = UnityEngine.Time.realtimeSinceStartup;
                     ProtoVessel checkProto = new ProtoVessel(checkVessel);
-                    //TODO: Fix sending of flying vessels.
-                    if (checkProto != null && (checkProto.situation != Vessel.Situations.FLYING))
+                    if (checkProto != null)
                     {
                         if (checkProto.vesselID != Guid.Empty)
                         {
@@ -869,15 +875,6 @@ namespace DarkMultiPlayer
                     }
                     DarkLog.Debug("Loading " + currentProto.vesselID + ", name: " + currentProto.vesselName + ", type: " + currentProto.vesselType);
 
-                    //Skip active vessel
-                    /*
-                    if (FlightGlobals.fetch.activeVessel != null ? FlightGlobals.fetch.activeVessel.id.ToString() == currentProto.vesselID.ToString() : false)
-                    {
-                        DarkLog.Debug("Updating the active vessel is currently not implmented, skipping!");
-                        return;
-                    }
-                    */
-
                     foreach (ProtoPartSnapshot part in currentProto.protoPartSnapshots)
                     {
                         //This line doesn't actually do anything useful, but if you get this reference, you're officially the most geeky person darklight knows.
@@ -901,10 +898,54 @@ namespace DarkMultiPlayer
                         if (wasActive)
                         {
                             DarkLog.Debug("ProtoVessel update for active vessel!");
+                            try
+                            {
+                                OrbitPhysicsManager.HoldVesselUnpack(5);
+                            }
+                            catch
+                            {
+                                //Don't care.
+                            }
+                            FlightGlobals.fetch.activeVessel.MakeInactive();
+                        }
+                    }
+
+                    //Kill old vessels, temporarily turning off destruction notifications to the server.
+                    bool oldDestroyIsValid = destroyIsValid;
+                    destroyIsValid = false;
+                    for (int vesselID = FlightGlobals.fetch.vessels.Count - 1; vesselID >= 0; vesselID--)
+                    {
+                        Vessel oldVessel = FlightGlobals.fetch.vessels[vesselID];
+                        if (oldVessel.id.ToString() == currentProto.vesselID.ToString())
+                        {
+                            KillVessel(oldVessel);
+                        }
+                    }
+                    destroyIsValid = oldDestroyIsValid;
+
+                    //This has to be the most ugliest peice of code you will ever see.
+                    //It spawns ships around the sun if the vessel is close. I feel bad for this, but the atmosphere is poison.
+                    if (currentProto.situation == Vessel.Situations.FLYING)
+                    {
+                        if (FlightGlobals.fetch.activeVessel != null)
+                        {
+                            if ((FlightGlobals.Bodies.IndexOf(FlightGlobals.fetch.activeVessel.mainBody) == currentProto.orbitSnapShot.ReferenceBodyIndex) && (currentProto.altitude < FlightGlobals.fetch.activeVessel.mainBody.maxAtmosphereAltitude))
+                            {
+                                double distance = Vector3d.Distance(FlightGlobals.fetch.activeVessel.GetWorldPos3D(), FlightGlobals.fetch.activeVessel.mainBody.GetWorldSurfacePosition(currentProto.latitude, currentProto.longitude, currentProto.altitude));
+                                DarkLog.Debug("Using sun loading hack for " + currentProto.vesselID.ToString() + ", distance: " + distance);
+                                if (distance < 2500)
+                                {
+                                    //Put it 10km above the atmosphere.
+                                    double hackDistance = 10000 + FlightGlobals.fetch.activeVessel.mainBody.maxAtmosphereAltitude + FlightGlobals.fetch.activeVessel.mainBody.Radius;
+                                    OrbitSnapshot os = new OrbitSnapshot(new Orbit(0, 0, hackDistance, 0, 0, 0, 0, FlightGlobals.fetch.activeVessel.mainBody));
+                                    currentProto.orbitSnapShot = os;
+                                }
+                            }
                         }
                     }
 
                     serverVesselsProtoUpdate[currentProto.vesselID.ToString()] = UnityEngine.Time.realtimeSinceStartup;
+                    //Spawn the vessel into the game
                     currentProto.Load(HighLogic.CurrentGame.flightState);
 
                     if (currentProto.vesselRef != null)
@@ -913,8 +954,7 @@ namespace DarkMultiPlayer
 
                         if (wasActive)
                         {
-                            DarkLog.Debug("Set active vessel");
-                            FlightGlobals.ForceSetActiveVessel(currentProto.vesselRef);
+                            switchActiveVesselOnNextUpdate = currentProto.vesselRef;
                         }
                         if (wasTarget)
                         {
@@ -922,19 +962,6 @@ namespace DarkMultiPlayer
                             FlightGlobals.fetch.SetVesselTarget(currentProto.vesselRef);
                         }
                         DarkLog.Debug("Protovessel Loaded");
-
-                        for (int vesselID = FlightGlobals.fetch.vessels.Count - 1; vesselID >= 0; vesselID--)
-                        {
-                            Vessel oldVessel = FlightGlobals.fetch.vessels[vesselID];
-                            if (oldVessel.id == currentProto.vesselID && oldVessel != currentProto.vesselRef)
-                            {
-                                if (!wasActive)
-                                {
-                                    KillVessel(oldVessel);
-                                }
-                            }
-                        }
-
                     }
                     else
                     {
@@ -1077,6 +1104,10 @@ namespace DarkMultiPlayer
                 {
                     killVessel.GoOnRails();
                 }
+                if (killVessel.loaded)
+                {
+                    killVessel.Unload();
+                }
                 killVessel.Die();
             }
         }
@@ -1140,7 +1171,7 @@ namespace DarkMultiPlayer
                     updateDistance = Vector3.Distance(FlightGlobals.fetch.activeVessel.GetWorldPos3D(), updateVessel.GetWorldPos3D());
                 }
                 bool isUnpacking = (updateDistance < updateVessel.distanceUnpackThreshold) && updateVessel.packed;
-                if (!updateVessel.packed && !isUnpacking)
+                if (!updateVessel.packed || (updateVessel.packed && !isUnpacking))
                 {
                     Vector3d updatePostion = updateBody.GetWorldSurfacePosition(update.position[0], update.position[1], update.position[2]);
                     Vector3d updateVelocity = new Vector3d(update.velocity[0], update.velocity[1], update.velocity[2]);
